@@ -27,7 +27,7 @@ class MTMODCoordinator(DataUpdateCoordinator):
         self.failcount = 0
 
     async def _async_update(self):
-        timeout = ClientTimeout(total=4)
+        timeout = ClientTimeout(total=8,sock_connect=6)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(self.url) as response:
