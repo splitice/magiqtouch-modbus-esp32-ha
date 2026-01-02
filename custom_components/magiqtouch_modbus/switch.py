@@ -91,17 +91,29 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
         return self._is_on
     
     @property
+    def icon(self):
+        """Return the icon for this switch."""
+        if self._mode == "cooling":
+            return "mdi:snowflake" if self._is_on else "mdi:snowflake-off"
+        else:  # heating
+            return "mdi:fire" if self._is_on else "mdi:fire-off"
+    
+    @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         attrs = {
             "zone": self.zone,
             "mode": self._mode,
         }
+        # Always show max_fan_speed so users can see the configuration
+        if self._max_fan_speed is not None:
+            attrs["max_fan_speed"] = self._max_fan_speed
+        else:
+            attrs["max_fan_speed"] = 10  # Show default
+            
         if self._is_on:
             if self._target_temp is not None:
                 attrs["target_temperature"] = self._target_temp
-            if self._max_fan_speed is not None:
-                attrs["max_fan_speed"] = self._max_fan_speed
             if self._saved_fan_speed is not None:
                 attrs["saved_fan_speed"] = self._saved_fan_speed
         return attrs
@@ -171,9 +183,35 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
     
     async def _start_thermostat_control(self):
         """Start thermostat control loop."""
-        # This will be called by the climate entity or a scheduler
-        # For now, we just enable the mode
-        pass
+        from .climate import MagiqtouchZones
+        
+        # Find the climate entity for this zone
+        climate_entity = None
+        for entity in MagiqtouchZones:
+            if entity.zone == self.zone:
+                climate_entity = entity
+                break
+        
+        if climate_entity is None:
+            _LOGGER.error(f"Could not find climate entity for zone {self.zone}")
+            return
+        
+        # Set the appropriate mode and fan speed
+        if self._mode == "cooling":
+            # Switch to cooling mode (manual fan control for thermostat)
+            await climate_entity.send_hvac_command("mode=2")  # Mode 2 is cooler with manual fan
+            # Set initial fan speed to max
+            if self._max_fan_speed:
+                await climate_entity.send_hvac_command(f"fanspeed={self._max_fan_speed}")
+            _LOGGER.info(f"Started cooling thermostat for zone {self.zone} with max fan speed {self._max_fan_speed}")
+        elif self._mode == "heating":
+            # Switch to heating mode
+            await climate_entity.send_hvac_command("mode=4")  # Mode 4 is heater mode
+            await climate_entity.send_hvac_command(f"zone{self.zone}=on")
+            _LOGGER.info(f"Started heating thermostat for zone {self.zone}")
+        
+        # Ensure system is powered on
+        await climate_entity.send_hvac_command("power=on")
     
     async def check_temperature_and_rampdown(self):
         """Check temperature and start rampdown if target reached."""
@@ -199,7 +237,21 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
             # Start rampdown if not already running
             if self._rampdown_task is None:
                 self._rampdown_task = asyncio.create_task(self._execute_rampdown())
-                _LOGGER.info(f"Starting cooling rampdown for zone {self.zone}")
+                _LOGGER.info(f"Starting cooling rampdown for zone {self.zone} (current: {current_temp}°C, target: {self._target_temp}°C)")
+        elif self._target_temp is not None and current_temp > self._target_temp:
+            # Temperature is above target, cancel rampdown and restore max fan speed
+            if self._rampdown_task is not None:
+                _LOGGER.info(f"Temperature rose above target, cancelling rampdown and restoring max fan speed for zone {self.zone}")
+                self._rampdown_task.cancel()
+                self._rampdown_task = None
+                self._rampdown_start_time = None
+                
+                # Restore max fan speed
+                from .climate import MagiqtouchZones
+                for entity in MagiqtouchZones:
+                    if entity.zone == self.zone:
+                        await entity.send_hvac_command(f"fanspeed={self._max_fan_speed}")
+                        break
     
     async def _execute_rampdown(self):
         """Execute the cooling rampdown over 5 minutes in 3 steps."""
