@@ -2,6 +2,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.helpers import entity_platform
 from .coordinator import MTMODCoordinator
 import logging
 
@@ -20,31 +21,49 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
     # Register services
     async def handle_set_max_fan_speed(call: ServiceCall):
         """Handle the set_thermostat_max_fan_speed service call."""
-        entity_id = call.data.get("entity_id")
+        entity_ids = call.data.get("entity_id")
         max_fan_speed = call.data.get("max_fan_speed")
         
-        # Find the entity
-        for entry_id, switches in hass.data[DOMAIN].get('thermostat_switches', {}).items():
-            for switch in switches:
-                if switch.entity_id == entity_id:
-                    switch.set_max_fan_speed(max_fan_speed)
-                    return
+        # Ensure entity_ids is a list
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
         
-        _LOGGER.error(f"Entity {entity_id} not found")
+        # Get the entity component for switch domain
+        component = hass.data.get("entity_components", {}).get("switch")
+        if component is None:
+            _LOGGER.error("Switch component not found")
+            return
+        
+        # Find and update the entities
+        for entity_id in entity_ids:
+            entity = component.get_entity(entity_id)
+            if entity and hasattr(entity, 'set_max_fan_speed'):
+                entity.set_max_fan_speed(max_fan_speed)
+            else:
+                _LOGGER.error(f"Entity {entity_id} not found or doesn't support set_max_fan_speed")
     
     async def handle_set_target_temperature(call: ServiceCall):
         """Handle the set_thermostat_target_temperature service call."""
-        entity_id = call.data.get("entity_id")
+        entity_ids = call.data.get("entity_id")
         target_temperature = call.data.get("target_temperature")
         
-        # Find the entity
-        for entry_id, switches in hass.data[DOMAIN].get('thermostat_switches', {}).items():
-            for switch in switches:
-                if switch.entity_id == entity_id:
-                    switch.set_target_temperature(target_temperature)
-                    return
+        # Ensure entity_ids is a list
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
         
-        _LOGGER.error(f"Entity {entity_id} not found")
+        # Get the entity component for switch domain
+        component = hass.data.get("entity_components", {}).get("switch")
+        if component is None:
+            _LOGGER.error("Switch component not found")
+            return
+        
+        # Find and update the entities
+        for entity_id in entity_ids:
+            entity = component.get_entity(entity_id)
+            if entity and hasattr(entity, 'set_target_temperature'):
+                entity.set_target_temperature(target_temperature)
+            else:
+                _LOGGER.error(f"Entity {entity_id} not found or doesn't support set_target_temperature")
     
     # Register the services
     hass.services.async_register(

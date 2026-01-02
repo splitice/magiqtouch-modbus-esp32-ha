@@ -42,7 +42,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             ))
     
     # Store switches reference for service calls
-    if not hasattr(hass.data[DOMAIN], 'thermostat_switches'):
+    if 'thermostat_switches' not in hass.data[DOMAIN]:
         hass.data[DOMAIN]['thermostat_switches'] = {}
     hass.data[DOMAIN]['thermostat_switches'][config_entry.entry_id] = switches
     
@@ -51,6 +51,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
 class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a Thermostat Switch."""
+    
+    # Constants for rampdown behavior
+    RAMPDOWN_STEP_DURATION = 100  # seconds per step
+    RAMPDOWN_HALF_SPEED_DIVISOR = 2  # divisor for half-speed calculation
     
     def __init__(self, coordinator, config_entry, zone, mode):
         """Initialize the thermostat switch."""
@@ -69,6 +73,16 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
         self._saved_fan_speed = None
         self._rampdown_task = None
         self._rampdown_start_time = None
+        self._temp_check_task = None
+    
+    def _find_climate_entity(self):
+        """Find the climate entity for this zone."""
+        from .climate import MagiqtouchZones
+        
+        for entity in MagiqtouchZones:
+            if entity.zone == self.zone:
+                return entity
+        return None
         
     @property
     def unique_id(self):
@@ -169,13 +183,10 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
         
         # Restore saved fan speed if available
         if self._saved_fan_speed is not None and self._mode == "cooling":
-            from .climate import MagiqtouchZones
-            # Find the climate entity for this zone and restore fan speed
-            for climate_entity in MagiqtouchZones:
-                if climate_entity.zone == self.zone:
-                    await climate_entity.send_hvac_command(f"fanspeed={self._saved_fan_speed}")
-                    _LOGGER.info(f"Restored fan speed {self._saved_fan_speed} for zone {self.zone}")
-                    break
+            climate_entity = self._find_climate_entity()
+            if climate_entity:
+                await climate_entity.send_hvac_command(f"fanspeed={self._saved_fan_speed}")
+                _LOGGER.info(f"Restored fan speed {self._saved_fan_speed} for zone {self.zone}")
         
         self.async_write_ha_state()
         
@@ -183,14 +194,7 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
     
     async def _start_thermostat_control(self):
         """Start thermostat control loop."""
-        from .climate import MagiqtouchZones
-        
-        # Find the climate entity for this zone
-        climate_entity = None
-        for entity in MagiqtouchZones:
-            if entity.zone == self.zone:
-                climate_entity = entity
-                break
+        climate_entity = self._find_climate_entity()
         
         if climate_entity is None:
             _LOGGER.error(f"Could not find climate entity for zone {self.zone}")
@@ -247,11 +251,9 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
                 self._rampdown_start_time = None
                 
                 # Restore max fan speed
-                from .climate import MagiqtouchZones
-                for entity in MagiqtouchZones:
-                    if entity.zone == self.zone:
-                        await entity.send_hvac_command(f"fanspeed={self._max_fan_speed}")
-                        break
+                climate_entity = self._find_climate_entity()
+                if climate_entity:
+                    await climate_entity.send_hvac_command(f"fanspeed={self._max_fan_speed}")
     
     async def _execute_rampdown(self):
         """Execute the cooling rampdown over 5 minutes in 3 steps."""
@@ -259,12 +261,7 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
             if self._max_fan_speed is None:
                 self._max_fan_speed = 10
             
-            from .climate import MagiqtouchZones
-            climate_entity = None
-            for entity in MagiqtouchZones:
-                if entity.zone == self.zone:
-                    climate_entity = entity
-                    break
+            climate_entity = self._find_climate_entity()
             
             if climate_entity is None:
                 _LOGGER.error(f"Could not find climate entity for zone {self.zone}")
@@ -272,16 +269,16 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
             
             self._rampdown_start_time = datetime.now()
             
-            # Step 1: Ramp to half speed (wait ~100 seconds)
-            half_speed = max(1, self._max_fan_speed // 2)
+            # Step 1: Ramp to half speed
+            half_speed = max(1, self._max_fan_speed // self.RAMPDOWN_HALF_SPEED_DIVISOR)
             _LOGGER.info(f"Rampdown step 1: Setting fan to {half_speed}")
             await climate_entity.send_hvac_command(f"fanspeed={half_speed}")
-            await asyncio.sleep(100)
+            await asyncio.sleep(self.RAMPDOWN_STEP_DURATION)
             
             if not self._is_on:
                 return
             
-            # Step 2: Ramp to speed 1 (wait ~100 seconds)
+            # Step 2: Ramp to speed 1
             _LOGGER.info(f"Rampdown step 2: Setting fan to 1")
             await climate_entity.send_hvac_command("fanspeed=1")
             await asyncio.sleep(100)
@@ -289,7 +286,13 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
             if not self._is_on:
                 return
             
-            # Step 3: Turn off (wait ~100 seconds)
+            # Step 2 continued: wait before step 3
+            await asyncio.sleep(self.RAMPDOWN_STEP_DURATION)
+            
+            if not self._is_on:
+                return
+            
+            # Step 3: Turn off
             _LOGGER.info(f"Rampdown step 3: Turning off")
             await climate_entity.send_hvac_command("power=off")
             
@@ -301,6 +304,7 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
             _LOGGER.info(f"Rampdown cancelled for zone {self.zone}")
             self._rampdown_task = None
             self._rampdown_start_time = None
+            raise  # Re-raise to properly handle cancellation
         except Exception as e:
             _LOGGER.error(f"Error during rampdown for zone {self.zone}: {e}")
             self._rampdown_task = None
@@ -311,7 +315,11 @@ class ThermostatSwitch(CoordinatorEntity, SwitchEntity):
         """Handle updated data from the coordinator."""
         # Check temperature and trigger rampdown if needed
         if self._is_on and self._mode == "cooling":
-            asyncio.create_task(self.check_temperature_and_rampdown())
+            # Cancel any existing temperature check task
+            if self._temp_check_task and not self._temp_check_task.done():
+                self._temp_check_task.cancel()
+            # Create new task and store reference
+            self._temp_check_task = asyncio.create_task(self.check_temperature_and_rampdown())
         
         self.async_write_ha_state()
     
