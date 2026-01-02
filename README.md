@@ -35,6 +35,9 @@ The integration now includes thermostat switches for each zone to provide automa
 
 - **Thermostat Cooling Switch**: Enables automatic cooling control for Zone 1 (if evaporative unit is enabled)
 - **Thermostat Heating Switch**: Enables automatic heating control for each zone (if heater is enabled)
+- **Configuration Number Entities**: Each thermostat has two number entities for easy configuration:
+  - **Max Fan Speed**: Set the maximum fan speed (1-10) for thermostat mode
+  - **Target Temperature**: Set the target temperature in Celsius (0-35°C)
 
 ### Behavior
 
@@ -42,7 +45,7 @@ When a thermostat switch is enabled:
 
 1. **Cooling Mode**: 
    - Saves your current manual fan speed
-   - Switches to cooling mode with configurable maximum fan speed
+   - Switches to cooling mode with the configured maximum fan speed
    - Monitors temperature continuously
    - When target temperature is reached, performs a "nice" ramp-down over 5 minutes in 3 steps:
      - Step 1: Reduce to half of max fan speed (~100 seconds)
@@ -55,12 +58,17 @@ When a thermostat switch is enabled:
 
 When disabled, the thermostat switch restores your previously saved manual fan speed.
 
-### Configuration Services
+### Configuration
 
-Two services are available to configure thermostat behavior:
+Configuration is done through dedicated number entities for each thermostat:
 
-- `magiqtouch_modbus.set_thermostat_max_fan_speed`: Set the maximum fan speed (1-10) for thermostat mode
-- `magiqtouch_modbus.set_thermostat_target_temperature`: Set the target temperature in Celsius
+- **Max Fan Speed Number**: Slider control (1-10) to set the maximum fan speed when thermostat is active
+- **Target Temperature Number**: Slider control (0-35°C) to set the temperature threshold for ramp-down
+
+These configuration entities appear alongside the thermostat switches in Home Assistant and can be:
+- Adjusted through the UI
+- Set via automations
+- Controlled through dashboards
 
 ### Attributes
 
