@@ -1,0 +1,42 @@
+set_thermostat_max_fan_speed:
+  name: Set Thermostat Max Fan Speed
+  description: Set the maximum fan speed for thermostat mode
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The thermostat switch entity ID
+      required: true
+      selector:
+        entity:
+          domain: switch
+    max_fan_speed:
+      name: Max Fan Speed
+      description: Maximum fan speed (1-10)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+
+set_thermostat_target_temperature:
+  name: Set Thermostat Target Temperature
+  description: Set the target temperature for thermostat mode
+  fields:
+    entity_id:
+      name: Entity ID
+      description: The thermostat switch entity ID
+      required: true
+      selector:
+        entity:
+          domain: switch
+    target_temperature:
+      name: Target Temperature
+      description: Target temperature in Celsius
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 35
+          step: 1
+          unit_of_measurement: "°C"
