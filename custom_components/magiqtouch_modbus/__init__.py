@@ -2,13 +2,25 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
-from homeassistant.helpers import entity_platform
+from homeassistant.helpers import entity_platform, config_validation as cv
 from .coordinator import MTMODCoordinator
 import logging
+import voluptuous as vol
 
 DOMAIN = "magiqtouch_modbus"
 PLATFORMS = ["climate", "switch"]
 _LOGGER = logging.getLogger(__name__)
+
+# Service schemas
+SERVICE_SET_MAX_FAN_SPEED_SCHEMA = vol.Schema({
+    vol.Required("entity_id"): cv.entity_ids,
+    vol.Required("max_fan_speed"): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+})
+
+SERVICE_SET_TARGET_TEMPERATURE_SCHEMA = vol.Schema({
+    vol.Required("entity_id"): cv.entity_ids,
+    vol.Required("target_temperature"): vol.All(vol.Coerce(float), vol.Range(min=0, max=35)),
+})
 
 async def async_setup(hass: HomeAssistant, config: dict):
     return True  # Only needed for legacy YAML config
@@ -65,17 +77,19 @@ async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry):
             else:
                 _LOGGER.error(f"Entity {entity_id} not found or doesn't support set_target_temperature")
     
-    # Register the services
+    # Register the services with schemas
     hass.services.async_register(
         DOMAIN,
         "set_thermostat_max_fan_speed",
-        handle_set_max_fan_speed
+        handle_set_max_fan_speed,
+        schema=SERVICE_SET_MAX_FAN_SPEED_SCHEMA
     )
     
     hass.services.async_register(
         DOMAIN,
         "set_thermostat_target_temperature",
-        handle_set_target_temperature
+        handle_set_target_temperature,
+        schema=SERVICE_SET_TARGET_TEMPERATURE_SCHEMA
     )
     
     return True
